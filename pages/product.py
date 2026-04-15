@@ -1,203 +1,165 @@
 import streamlit as st
 import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
+import matplotlib.ticker as mticker
+import numpy as np
+from pages.style_utils import DAY_STYLE, PALETTE, BG, TEXT, apply_style
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
-st.set_page_config(page_title="Product Dashboard", layout="wide")
+st.set_page_config(page_title="Products · FlowState", layout="wide")
+st.markdown(DAY_STYLE, unsafe_allow_html=True)
+apply_style()
 
-# -----------------------------
-# LOAD DATA
-# -----------------------------
-df = pd.read_csv("Product_Sales.csv")
+@st.cache_data
+def load_data():
+    df = pd.read_csv("Product_Sales.csv", parse_dates=["OrderDate", "DeliveryDate"])
+    df["Profit"] = df["TotalPrice"] * 0.2
+    df["ProfitMargin"] = df["Profit"] / df["TotalPrice"]
+    return df
 
-df.columns = df.columns.str.strip()
+df = load_data()
 
-# Convert dates
-df['OrderDate'] = pd.to_datetime(df['OrderDate'])
+with st.sidebar:
+    st.markdown("**Filters**")
+    products = st.multiselect("Product", df["Product"].unique(), default=list(df["Product"].unique()))
+    date_range = st.date_input("Date Range", [df["OrderDate"].min(), df["OrderDate"].max()])
 
-# -----------------------------
-# TITLE
-# -----------------------------
-st.title("📦 Product Performance Dashboard")
-
-# -----------------------------
-# SIDEBAR FILTERS
-# -----------------------------
-st.sidebar.header("🔍 Filters")
-
-products = st.sidebar.multiselect(
-    "Select Product(s)",
-    df['Product'].unique(),
-    default=df['Product'].unique()
-)
-
-date_range = st.sidebar.date_input(
-    "Select Date Range",
-    [df['OrderDate'].min(), df['OrderDate'].max()]
-)
-
-
-filtered_df = df[
-    (df['Product'].isin(products)) &
-    (df['OrderDate'] >= pd.to_datetime(date_range[0])) &
-    (df['OrderDate'] <= pd.to_datetime(date_range[1]))
+fdf = df[
+    df["Product"].isin(products) &
+    (df["OrderDate"] >= pd.to_datetime(date_range[0])) &
+    (df["OrderDate"] <= pd.to_datetime(date_range[1]))
 ]
 
-st.write(f"### Showing data for: {', '.join(products)}")
+st.markdown("""
+<div class="page-header">
+  <div class="page-title">📦 Product Performance</div>
+  <div class="page-sub">Deep dive into product revenue, profitability, heatmaps, and return rates</div>
+</div>
+""", unsafe_allow_html=True)
 
-# -----------------------------
-# 1. REVENUE TREND OVER TIME
-# -----------------------------
-st.subheader("📈 Revenue Trend Over Time")
+c1, c2, c3, c4 = st.columns(4)
+kpis = [
+    ("Products", f"{fdf['Product'].nunique()}"),
+    ("Total Revenue", f"₹{fdf['TotalPrice'].sum():,.0f}"),
+    ("Avg Margin", f"{fdf['ProfitMargin'].mean()*100:.1f}%"),
+    ("Total Units", f"{fdf['Quantity'].sum():,.0f}"),
+]
+for col, (label, val) in zip([c1, c2, c3, c4], kpis):
+    with col:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">{label}</div><div class="kpi-value">{val}</div></div>', unsafe_allow_html=True)
 
-trend = filtered_df.groupby('OrderDate')['TotalPrice'].sum()
-st.line_chart(trend)
+st.markdown("<br>", unsafe_allow_html=True)
 
-# -----------------------------
-# 2. TOP PERFORMING PRODUCTS
-# -----------------------------
-st.subheader("🏆 Top Performing Products")
+# Row 1: Top products bar + Revenue trend
+col1, col2 = st.columns([5, 5])
 
-top_products = filtered_df.groupby('Product')['TotalPrice'].sum().sort_values(ascending=False)
-
-fig, ax = plt.subplots(figsize=(10, 5))
-bars = ax.bar(top_products.index, top_products.values, color='steelblue')
-ax.set_xlabel("Product")
-ax.set_ylabel("Revenue")
-ax.set_title("Top Performing Products")
-plt.xticks(rotation=30, ha='right')
-
-for bar, val in zip(bars, top_products.values):
-    ax.text(bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + top_products.values.max() * 0.01,
-            f"{val:,.0f}", ha='center', fontsize=9)
-
-plt.tight_layout()
-st.pyplot(fig)
-
-# -----------------------------
-# 3. REVENUE BY PRODUCT - HORIZONTAL BAR
-# -----------------------------
-st.subheader("📊 Revenue by Product (Horizontal Bar)")
-
-rev_by_product = filtered_df.groupby('Product')['TotalPrice'].sum().sort_values(ascending=True)
-
-fig, ax = plt.subplots(figsize=(10, 6))
-bars = ax.barh(rev_by_product.index, rev_by_product.values, color='darkcyan')
-ax.set_xlabel("Revenue")
-ax.set_ylabel("Product")
-ax.set_title("Revenue by Product")
-
-for bar, val in zip(bars, rev_by_product.values):
-    ax.text(bar.get_width() + rev_by_product.values.max() * 0.01,
-            bar.get_y() + bar.get_height() / 2,
-            f"{val:,.0f}", va='center', fontsize=9)
-
-plt.tight_layout()
-st.pyplot(fig)
-
-# -----------------------------
-# 4. REGION x PRODUCT HEATMAP
-# -----------------------------
-st.subheader("🗺️ Region × Product Revenue Heatmap")
-
-if 'Region' in filtered_df.columns:
-    heatmap_data = filtered_df.pivot_table(
-        index='Region',
-        columns='Product',
-        values='TotalPrice',
-        aggfunc='sum',
-        fill_value=0
-    )
-
-    fig, ax = plt.subplots(figsize=(12, 6))
-    im = ax.imshow(heatmap_data.values, aspect='auto', cmap='YlOrRd')
-
-    ax.set_xticks(range(len(heatmap_data.columns)))
-    ax.set_yticks(range(len(heatmap_data.index)))
-    ax.set_xticklabels(heatmap_data.columns, rotation=45, ha='right', fontsize=9)
-    ax.set_yticklabels(heatmap_data.index, fontsize=9)
-    ax.set_title("Revenue Heatmap: Region × Product")
-    plt.colorbar(im, ax=ax, label="Revenue")
-
-    for i in range(len(heatmap_data.index)):
-        for j in range(len(heatmap_data.columns)):
-            ax.text(j, i, f"{heatmap_data.values[i, j]:,.0f}",
-                    ha='center', va='center', fontsize=7, color='black')
-
+with col1:
+    st.markdown('<div class="chart-card"><div class="chart-title">🏆 Top Products by Revenue</div>', unsafe_allow_html=True)
+    top = fdf.groupby("Product")["TotalPrice"].sum().sort_values(ascending=False).reset_index()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(top["Product"], top["TotalPrice"], color=PALETTE[:len(top)], edgecolor="none")
+    for bar, val in zip(bars, top["TotalPrice"]):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + top["TotalPrice"].max()*0.01,
+                f"₹{val/1000:.0f}K", ha="center", fontsize=8)
+    ax.set_ylabel("Revenue (₹)")
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"₹{x/1000:.0f}K"))
+    ax.set_xlabel("")
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    plt.xticks(rotation=30, ha="right", fontsize=9)
     plt.tight_layout()
     st.pyplot(fig)
-else:
-    st.warning("⚠️ 'Region' column not found in data.")
+    plt.close()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# -----------------------------
-# 5. PAYMENT METHOD ANALYSIS
-# -----------------------------
-st.subheader("💳 Payment Method Analysis")
-
-if 'PaymentMethod' in filtered_df.columns:
-    payment_revenue = filtered_df.groupby('PaymentMethod')['TotalPrice'].sum().sort_values(ascending=False)
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    bars = ax.bar(payment_revenue.index, payment_revenue.values,
-                  color=['#4C72B0', '#DD8452', '#55A868', '#C44E52', '#8172B2'])
-    ax.set_xlabel("Payment Method")
-    ax.set_ylabel("Revenue")
-    ax.set_title("Revenue by Payment Method")
-    plt.xticks(rotation=30, ha='right')
-
-    for bar, val in zip(bars, payment_revenue.values):
-        ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + payment_revenue.values.max() * 0.01,
-                f"{val:,.0f}", ha='center', fontsize=9)
-
+with col2:
+    st.markdown('<div class="chart-card"><div class="chart-title">📈 Revenue Trend Over Time</div>', unsafe_allow_html=True)
+    trend = fdf.groupby("OrderDate")["TotalPrice"].sum().reset_index()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    sns.lineplot(data=trend, x="OrderDate", y="TotalPrice", color=PALETTE[0], linewidth=2, ax=ax)
+    ax.fill_between(trend["OrderDate"], trend["TotalPrice"], alpha=0.1, color=PALETTE[0])
+    ax.set_xlabel("")
+    ax.set_ylabel("Revenue (₹)")
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"₹{x/1000:.0f}K"))
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    plt.xticks(rotation=30, ha="right", fontsize=9)
     plt.tight_layout()
     st.pyplot(fig)
-else:
-    st.warning("⚠️ 'PaymentMethod' column not found in data.")
+    plt.close()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# -----------------------------
-# 6. RETURN RATE BY PRODUCT
-# -----------------------------
-st.subheader("🔄 Return Rate by Product")
-
-if 'Returned' in filtered_df.columns:
-    return_data = filtered_df.groupby('Product').agg(
-        TotalOrders=('Returned', 'count'),
-        TotalReturned=('Returned', 'sum')
+# Row 2: Heatmap Region x Product
+st.markdown('<div class="chart-card"><div class="chart-title">🗺️ Region × Product Revenue Heatmap</div>', unsafe_allow_html=True)
+if "Region" in fdf.columns:
+    heat = fdf.pivot_table(index="Region", columns="Product", values="TotalPrice", aggfunc="sum", fill_value=0)
+    fig, ax = plt.subplots(figsize=(14, max(3, len(heat)*0.8)))
+    sns.heatmap(
+        heat, annot=True, fmt=".0f", cmap="Blues",
+        linewidths=0.5, linecolor="#eef2f7",
+        ax=ax, cbar_kws={"shrink": 0.6},
+        annot_kws={"size": 8}
     )
-    return_data['ReturnRate(%)'] = (
-        return_data['TotalReturned'] / return_data['TotalOrders'] * 100
-    ).round(2)
-    return_data = return_data.sort_values('ReturnRate(%)', ascending=False)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    bars = ax.bar(
-        return_data.index,
-        return_data['ReturnRate(%)'],
-        color=['#d9534f' if r > 20 else '#5cb85c' for r in return_data['ReturnRate(%)']]
-    )
-    ax.set_xlabel("Product")
-    ax.set_ylabel("Return Rate (%)")
-    ax.set_title("Return Rate by Product")
-    ax.axhline(
-        y=return_data['ReturnRate(%)'].mean(),
-        color='orange', linestyle='--',
-        label=f"Avg: {return_data['ReturnRate(%)'].mean():.1f}%"
-    )
-    ax.legend()
-    plt.xticks(rotation=30, ha='right')
-
-    for bar, val in zip(bars, return_data['ReturnRate(%)']):
-        ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.3,
-                f"{val}%", ha='center', fontsize=9)
-
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    plt.xticks(rotation=30, ha="right", fontsize=9)
     plt.tight_layout()
     st.pyplot(fig)
-    st.dataframe(return_data.reset_index())
-else:
-    st.warning("⚠️ 'Returned' column not found in data.")
+    plt.close()
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Row 3: Payment Method + Return Rate
+col3, col4 = st.columns(2)
+
+with col3:
+    st.markdown('<div class="chart-card"><div class="chart-title">💳 Revenue by Payment Method</div>', unsafe_allow_html=True)
+    if "PaymentMethod" in fdf.columns:
+        pm = fdf.groupby("PaymentMethod")["TotalPrice"].sum().sort_values(ascending=False).reset_index()
+        fig, ax = plt.subplots(figsize=(7, 3.8))
+        bars = ax.bar(pm["PaymentMethod"], pm["TotalPrice"], color=PALETTE[:len(pm)], edgecolor="none")
+        for bar, val in zip(bars, pm["TotalPrice"]):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + pm["TotalPrice"].max()*0.01,
+                    f"₹{val/1000:.0f}K", ha="center", fontsize=9)
+        ax.set_ylabel("Revenue (₹)")
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"₹{x/1000:.0f}K"))
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        plt.xticks(rotation=20, ha="right")
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col4:
+    st.markdown('<div class="chart-card"><div class="chart-title">🔄 Return Rate by Product</div>', unsafe_allow_html=True)
+    if "Returned" in fdf.columns:
+        ret = fdf.groupby("Product").agg(Total=("Returned","count"), Returned=("Returned","sum")).reset_index()
+        ret["ReturnRate"] = ret["Returned"] / ret["Total"] * 100
+        avg_rate = ret["ReturnRate"].mean()
+        ret = ret.sort_values("ReturnRate", ascending=False)
+        fig, ax = plt.subplots(figsize=(7, 3.8))
+        colors = [PALETTE[1] if r > avg_rate else PALETTE[2] for r in ret["ReturnRate"]]
+        bars = ax.bar(ret["Product"], ret["ReturnRate"], color=colors, edgecolor="none")
+        ax.axhline(avg_rate, color=PALETTE[0], linestyle="--", linewidth=1.5, label=f"Avg {avg_rate:.1f}%")
+        ax.legend(fontsize=9)
+        for bar, val in zip(bars, ret["ReturnRate"]):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2, f"{val:.1f}%", ha="center", fontsize=8)
+        ax.set_ylabel("Return Rate (%)")
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        plt.xticks(rotation=30, ha="right", fontsize=9)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Profitability table
+st.markdown('<div class="chart-card"><div class="chart-title">📋 Detailed Product Profitability Report</div>', unsafe_allow_html=True)
+prof = fdf.groupby("Product").agg(
+    TotalRevenue=("TotalPrice", "sum"),
+    TotalProfit=("Profit", "sum"),
+    AvgMargin=("ProfitMargin", "mean"),
+    Orders=("OrderID", "count"),
+    Units=("Quantity", "sum")
+).reset_index()
+prof["AvgMargin"] = (prof["AvgMargin"] * 100).round(2).astype(str) + "%"
+prof["TotalRevenue"] = prof["TotalRevenue"].map("₹{:,.0f}".format)
+prof["TotalProfit"] = prof["TotalProfit"].map("₹{:,.0f}".format)
+st.dataframe(prof.rename(columns={"TotalRevenue":"Revenue","TotalProfit":"Profit","AvgMargin":"Avg Margin","Orders":"Orders","Units":"Units"}), use_container_width=True, hide_index=True)
+st.markdown('</div>', unsafe_allow_html=True)
