@@ -86,7 +86,7 @@ with col_right:
     
     plt.tight_layout()
     st.pyplot(fig3)
-    
+
 # ---------------- 4. REGIONAL REVENUE HEATMAP ----------------
 st.markdown("---")
 st.subheader("🌡️ Regional Revenue Intensity")
